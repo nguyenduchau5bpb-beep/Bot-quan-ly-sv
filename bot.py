@@ -3,23 +3,26 @@ import threading
 import sqlite3
 import random
 import datetime
+import asyncio
 import discord
 from discord.ext import commands
 from discord import app_commands
+from discord.ui import Button, View, Select
 from flask import Flask
+import yt_dlp
 
-# --- WEB SERVER FLASK (GIỮ BOT SỐNG TRÊN RENDER) ---
+# --- 1. WEB SERVER FLASK TỐI ƯU ---
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Bot Discord cấp độ tối cao đang hoạt động 24/7!"
+    return "Bot Discord V5 Ultimate đang càn quét 24/7!"
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
 
-# --- DATABASE SQLITE ---
+# --- 2. DATABASE SQLITE GỌN GÀNG ---
 fn_db = "bot_database.db"
 
 def init_db():
@@ -38,7 +41,8 @@ def init_db():
                         xu INTEGER DEFAULT 1000,
                         warns INTEGER DEFAULT 0,
                         xp INTEGER DEFAULT 0,
-                        level INTEGER DEFAULT 1
+                        level INTEGER DEFAULT 1,
+                        title TEXT DEFAULT 'Dân Thường'
                       )''')
     conn.commit()
     conn.close()
@@ -65,91 +69,80 @@ def update_config(guild_id, key, value):
     conn.commit()
     conn.close()
 
-def add_badword_db(guild_id, word):
-    config = get_server_config(guild_id)
-    words = config["badwords"]
-    if word not in words:
-        words.append(word)
-        conn = sqlite3.connect(fn_db)
-        cursor = conn.cursor()
-        cursor.execute("UPDATE config SET badwords = ? WHERE guild_id = ?", (",".join(words), guild_id))
-        conn.commit()
-        conn.close()
-
 def get_user(user_id):
     conn = sqlite3.connect(fn_db)
     cursor = conn.cursor()
-    cursor.execute("SELECT xu, warns, xp, level FROM users WHERE user_id = ?", (user_id,))
+    cursor.execute("SELECT xu, warns, xp, level, title FROM users WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
     if not row:
-        cursor.execute("INSERT INTO users (user_id, xu, warns, xp, level) VALUES (?, 1000, 0, 0, 1)", (user_id,))
+        cursor.execute("INSERT INTO users (user_id, xu, warns, xp, level, title) VALUES (?, 1000, 0, 0, 1, 'Dân Thường')", (user_id,))
         conn.commit()
-        row = (1000, 0, 0, 1)
+        row = (1000, 0, 0, 1, 'Dân Thường')
     conn.close()
-    return {"xu": row[0], "warns": row[1], "xp": row[2], "level": row[3]}
+    return {"xu": row[0], "warns": row[1], "xp": row[2], "level": row[3], "title": row[4]}
 
-def update_user(user_id, xu, warns, xp, level):
+def update_user(user_id, xu, warns, xp, level, title):
     conn = sqlite3.connect(fn_db)
     cursor = conn.cursor()
-    cursor.execute("UPDATE users SET xu = ?, warns = ?, xp = ?, level = ? WHERE user_id = ?", (xu, warns, xp, level, user_id))
+    cursor.execute("UPDATE users SET xu = ?, warns = ?, xp = ?, level = ?, title = ? WHERE user_id = ?", (xu, warns, xp, level, title, user_id))
     conn.commit()
     conn.close()
 
-# --- CORE BOT ---
+# --- 3. CORE BOT ---
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
+intents.voice_states = True
 
-class UltimateBot(commands.Bot):
+class UltimateBotV5(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
         await self.tree.sync()
-        print("🔥 Đã nạp toàn bộ vũ khí hủy diệt vào Slash Commands!")
+        print("🔥 Đã đồng bộ Slash Commands phiên bản V5!")
 
-bot = UltimateBot()
+bot = UltimateBotV5()
 
 @bot.event
 async def on_ready():
-    print(f"🚀 Bot {bot.user} đã thức tỉnh toàn bộ công lực!")
-    await bot.change_presence(activity=discord.Game(name="/menu | Bố mày quản server"))
+    print(f"🚀 Bot V5 {bot.user} đã sẵn sàng càn quét server!")
+    await bot.change_presence(activity=discord.Game(name="/panel | Giao Diện Nút Bấm VIP"))
 
-@bot.event
-async def on_member_join(member):
-    config = get_server_config(member.guild.id)
-    if config["auto_role"]:
-        role = member.guild.get_role(config["auto_role"])
-        if role:
-            try:
-                await member.add_roles(role)
-            except Exception as e:
-                print(f"Lỗi cấp role: {e}")
+# --- 4. GIAO DIỆN PHÍM BẤM NHANH (UI BUTTONS) ---
+class QuickPanelView(View):
+    def __init__(self):
+        super().__init__(timeout=None)
 
-    if config["welcome_channel"]:
-        channel = member.guild.get_channel(config["welcome_channel"])
-        if channel:
-            embed = discord.Embed(
-                title="🎉 CÓ CON GÀ MỚI ĐỔ BỘ!",
-                description=f"Chào mừng {member.mention} đã lạc vào **{member.guild.name}**!\nLo mà sống cho đúng luật, đừng để tao phải ra tay.",
-                color=discord.Color.green()
-            )
-            embed.set_thumbnail(url=member.display_avatar.url)
-            await channel.send(embed=embed)
+    @discord.ui.button(label="🎁 Điểm Danh (+2k Xu)", style=discord.ButtonStyle.green, custom_id="v5_daily")
+    async def daily_btn(self, interaction: discord.Interaction, button: Button):
+        u = get_user(interaction.user.id)
+        u["xu"] += 2000
+        update_user(interaction.user.id, u["xu"], u["warns"], u["xp"], u["level"], u["title"])
+        await interaction.response.send_message(f"🎉 Bút thành công **2,000 Xu**! (Tổng: {u['xu']:,} Xu)", ephemeral=True)
 
-@bot.event
-async def on_member_remove(member):
-    config = get_server_config(member.guild.id)
-    if config["goodbye_channel"]:
-        channel = member.guild.get_channel(config["goodbye_channel"])
-        if channel:
-            embed = discord.Embed(
-                title="👋 MỘT THẰNG NỮA ĐÃ CÚT",
-                description=f"Tạm biệt {member.name} ({member.mention}). Bớt đi một đứa báo đời cho sạch server!",
-                color=discord.Color.red()
-            )
-            await channel.send(embed=embed)
+    @discord.ui.button(label="📊 Xem Hồ Sơ", style=discord.ButtonStyle.blurple, custom_id="v5_rank")
+    async def rank_btn(self, interaction: discord.Interaction, button: Button):
+        u = get_user(interaction.user.id)
+        embed = discord.Embed(title=f"📊 HỒ SƠ: {interaction.user.name}", color=discord.Color.dark_blue())
+        embed.set_thumbnail(url=interaction.user.display_avatar.url)
+        embed.add_field(name="🎖️ Danh hiệu", value=u["title"], inline=False)
+        embed.add_field(name="⭐ Level", value=str(u["level"]), inline=True)
+        embed.add_field(name="💰 Tài sản", value=f"{u['xu']:,} Xu", inline=True)
+        embed.add_field(name="⚠️ Vi phạm", value=f"{u['warns']} lần", inline=True)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
+    @discord.ui.button(label="🏦 Vay Nóng", style=discord.ButtonStyle.red, custom_id="v5_loan")
+    async def loan_btn(self, interaction: discord.Interaction, button: Button):
+        u = get_user(interaction.user.id)
+        if u["xu"] >= 200:
+            await interaction.response.send_message("❌ Mày vẫn còn tiền, cút đi không cho vay!", ephemeral=True)
+            return
+        u["xu"] += 500
+        update_user(interaction.user.id, u["xu"], u["warns"], u["xp"], u["level"], u["title"])
+        await interaction.response.send_message("🏦 Đã bơm nóng **500 Xu** cứu đói vào ví!", ephemeral=True)
+
+# --- 5. BỘ LỌC TỰ ĐỘNG & XP ---
 @bot.event
 async def on_message(message):
     if message.author.bot or not message.guild:
@@ -158,201 +151,131 @@ async def on_message(message):
     config = get_server_config(message.guild.id)
     content = message.content.lower()
 
-    # 1. Antilink tự động trảm
     if config["antilink"] == 1 and ("http://" in content or "https://" in content or "discord.gg/" in content):
         if not message.author.guild_permissions.manage_messages:
             await message.delete()
-            await message.timeout(datetime.timedelta(minutes=10), reason="Spam link bậy bạ")
-            await message.channel.send(f"🚨 {message.author.mention} vừa quăng link bậy nên đã bị khóa mõm 10 phút!", delete_after=5)
+            await message.timeout(datetime.timedelta(minutes=10), reason="Spam link")
+            await message.channel.send(f"🚨 {message.author.mention} quăng link bậy nên đã bị khóa mõm 10 phút!", delete_after=5)
             return
 
-    # 2. Lọc từ cấm siêu tốc
     for word in config["badwords"]:
         if word and word in content:
             await message.delete()
             u = get_user(message.author.id)
             u["warns"] += 1
-            update_user(message.author.id, u["xu"], u["warns"], u["xp"], u["level"])
-            
-            await message.channel.send(f"⚠️ {message.author.mention}, mồm mép láo toét! Đã xóa tin nhắn và cộng 1 thẻ vàng (Tổng: {u['warns']}/3)", delete_after=5)
-            
+            update_user(message.author.id, u["xu"], u["warns"], u["xp"], u["level"], u["title"])
+            await message.channel.send(f"⚠️ {message.author.mention}, mồm mép láo toét! Phạt 1 thẻ vàng ({u['warns']}/3)", delete_after=5)
             if u["warns"] >= 3:
                 try:
                     await message.author.kick(reason="Chửi tục quá 3 lần")
-                    await message.channel.send(f"🔨 Đã tự động sút {message.author.mention} ra khỏi server vì tích đủ 3 thẻ vàng chửi tục!")
                 except:
                     pass
             return
 
-    # 3. XP & Level tự động cày cuốc
+    # Tăng XP cày level tự động
     u = get_user(message.author.id)
-    xp = u["xp"] + random.randint(15, 35)
+    xp = u["xp"] + random.randint(15, 30)
     level = u["level"]
-    
     if xp >= level * 100:
         level += 1
         xp = 0
-        await message.channel.send(f"⚡ Ghê đấy {message.author.mention}, đã cày lên **Level {level}** rồi cơ à!")
+        await message.channel.send(f"⚡ Ghê đấy {message.author.mention}, vừa cày lên **Level {level}**!")
 
-    update_user(message.author.id, u["xu"], u["warns"], xp, level)
+    update_user(message.author.id, u["xu"], u["warns"], xp, level, u["title"])
     await bot.process_commands(message)
 
-# --- SLASH COMMANDS TOÀN NĂNG ---
+# --- 6. HỆ THỐNG NHẠC VOICE (YT-DLP & FFMPEG) ---
+ytdl_format_options = {'format': 'bestaudio/best', 'noplaylist': True, 'quiet': True}
+ffmpeg_options = {'options': '-vn'}
+ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
 
-@bot.tree.command(name="menu", description="Bảng điều khiển tối tân của bot")
-async def menu(interaction: discord.Interaction):
-    embed = discord.Embed(
-        title="💀 HỆ THỐNG QUẢN LÝ TỐI CAO",
-        description="Vũ khí hạng nặng - Tự động trảm sát 100%",
-        color=discord.Color.dark_red()
-    )
-    embed.add_field(name="⚙️ Cấu Hình Server", value="`/setwelcome`, `/setgoodbye`, `/setautorole`, `/badword`, `/togglelink`", inline=False)
-    embed.add_field(name="🛡️ Kỷ Luật & Trảm Sát", value="`/warn`, `/mute`, `/unmute`, `/kick`, `/ban`, `/clean`", inline=False)
-    embed.add_field(name="🎮 Tương Tác & Kinh Tế", value="`/daily`, `/rank`, `/pay`, `/taixiu`", inline=False)
-    embed.set_footer(text="Không khoan nhượng cho bất kỳ thành viên nào báo đời.")
-    await interaction.response.send_message(embed=embed)
+class YTDLSource(discord.PCMVolumeTransformer):
+    def __init__(self, source, *, data, volume=0.5):
+        super().__init__(source, volume)
+        self.title = data.get('title')
 
-@bot.tree.command(name="setwelcome", description="Cài đặt kênh chào mừng")
-@app_commands.checks.has_permissions(administrator=True)
-async def setwelcome(interaction: discord.Interaction, channel: discord.TextChannel):
-    update_config(interaction.guild.id, "welcome_channel", channel.id)
-    await interaction.response.send_message(f"✅ Đã chọn kênh {channel.mention} làm trạm chào mừng!")
+    @classmethod
+    async def from_url(cls, url, *, loop=None):
+        loop = loop or asyncio.get_event_loop()
+        data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=False))
+        if 'entries' in data:
+            data = data['entries'][0]
+        filename = data['url']
+        return cls(discord.FFmpegPCMAudio(filename, **ffmpeg_options), data=data)
 
-@bot.tree.command(name="setgoodbye", description="Cài đặt kênh tiễn biệt")
-@app_commands.checks.has_permissions(administrator=True)
-async def setgoodbye(interaction: discord.Interaction, channel: discord.TextChannel):
-    update_config(interaction.guild.id, "goodbye_channel", channel.id)
-    await interaction.response.send_message(f"✅ Đã chọn kênh {channel.mention} làm trạm tiễn biệt!")
-
-@bot.tree.command(name="setautorole", description="Cài đặt tự động cấp role khi có mem mới")
-@app_commands.checks.has_permissions(administrator=True)
-async def setautorole(interaction: discord.Interaction, role: discord.Role):
-    update_config(interaction.guild.id, "auto_role", role.id)
-    await interaction.response.send_message(f"✅ Từ giờ mem mới vào sẽ tự ăn ngay Role: **{role.name}**!")
-
-@bot.tree.command(name="badword", description="Thêm từ cấm vào danh sách tử hình")
-@app_commands.checks.has_permissions(administrator=True)
-async def badword(interaction: discord.Interaction, tu_cam: str):
-    add_badword_db(interaction.guild.id, tu_cam.lower())
-    await interaction.response.send_message(f"🚫 Đã nạp từ `{tu_cam}` vào danh sách tử hình!")
-
-@bot.tree.command(name="togglelink", description="Bật/Tắt chống gửi link (1: Bật, 0: Tắt)")
-@app_commands.checks.has_permissions(administrator=True)
-async def togglelink(interaction: discord.Interaction, trang_thai: int):
-    if trang_thai not in [0, 1]:
-        await interaction.response.send_message("❌ Chỉ chọn `1` hoặc `0`!", ephemeral=True)
+@bot.tree.command(name="play", description="Phát nhạc từ YouTube vào Voice Channel")
+async def play(interaction: discord.Interaction, tu_khoa: str):
+    if not interaction.user.voice:
+        await interaction.response.send_message("❌ Mày phải chui vào Voice Channel trước!", ephemeral=True)
         return
-    update_config(interaction.guild.id, "antilink", trang_thai)
-    st_text = "BẬT" if trang_thai == 1 else "TẮT"
-    await interaction.response.send_message(f"🛡️ Đã **{st_text}** hệ thống chống spam link tự động khóa mõm!")
-
-@bot.tree.command(name="warn", description="Cảnh cáo thành viên")
-@app_commands.checks.has_permissions(kick_members=True)
-async def warn(interaction: discord.Interaction, member: discord.Member, ly_do: str):
-    u = get_user(member.id)
-    u["warns"] += 1
-    update_user(member.id, u["xu"], u["warns"], u["xp"], u["level"])
+    channel = interaction.user.voice.channel
+    if interaction.guild.voice_client is None:
+        await channel.connect()
     
-    await interaction.response.send_message(f"⚠️ {member.mention} đã nhận thẻ vàng số **{u['warns']}/3**. Lý do: {ly_do}")
-    if u["warns"] >= 3:
-        await member.kick(reason="Quá 3 lần cảnh cáo")
-        await interaction.channel.send(f"🔨 Đã đá đít {member.mention} ra khỏi server vì đủ combo 3 cáo trạng!")
+    await interaction.response.defer()
+    try:
+        player = await YTDLSource.from_url(tu_khoa, loop=bot.loop)
+        interaction.guild.voice_client.play(player)
+        await interaction.followup.send(f"🎶 Đang quẩy bài: **{player.title}**")
+    except Exception as e:
+        await interaction.followup.send(f"❌ Lỗi phát nhạc: {e}")
 
-@bot.tree.command(name="mute", description="Khóa mõm thành viên ngứa đòn")
-@app_commands.checks.has_permissions(moderate_members=True)
-async def mute(interaction: discord.Interaction, member: discord.Member, phut: int, ly_do: str):
-    duration = datetime.timedelta(minutes=phut)
-    await member.timeout(duration, reason=ly_do)
-    await interaction.response.send_message(f"🔇 Đã nhốt {member.mention} vào ngục tối trong `{phut} phút`. Lý do: {ly_do}")
+@bot.tree.command(name="stop", description="Dừng nhạc và đuổi bot ra khỏi phòng")
+async def stop(interaction: discord.Interaction):
+    if interaction.guild.voice_client:
+        await interaction.guild.voice_client.disconnect()
+        await interaction.response.send_message("⏹️ Đã dừng nhạc và cút khỏi phòng!")
+    else:
+        await interaction.response.send_message("❌ Bot có ở trong phòng đâu?", ephemeral=True)
 
-@bot.tree.command(name="unmute", description="Thả tự do cho thành viên")
-@app_commands.checks.has_permissions(moderate_members=True)
-async def unmute(interaction: discord.Interaction, member: discord.Member):
-    await member.timeout(None)
-    await interaction.response.send_message(f"🔊 Đã ân xá, thả tự do cho cái mồm của {member.mention}!")
+# --- 7. SÒNG BÀI & CÁC LỆNH CƠ BẢN ---
+@bot.tree.command(name="panel", description="Mở bảng điều khiển nút bấm nhanh")
+async def panel(interaction: discord.Interaction):
+    embed = discord.Embed(title="🎮 BẢNG ĐIỀU KHIỂN NHANH V5", description="Bấm nút bên dưới để thao tác ngay lập tức!", color=discord.Color.gold())
+    await interaction.response.send_message(embed=embed, view=QuickPanelView())
 
-@bot.tree.command(name="kick", description="Sút cổ một đứa ra khỏi server")
-@app_commands.checks.has_permissions(kick_members=True)
-async def kick(interaction: discord.Interaction, member: discord.Member, ly_do: str):
-    await member.kick(reason=ly_do)
-    await interaction.response.send_message(f"👢 Đã sút thành công {member.mention} ra đường! Lý do: {ly_do}")
-
-@bot.tree.command(name="ban", description="Vĩnh viễn trục xuất một đứa ra khỏi server")
-@app_commands.checks.has_permissions(ban_members=True)
-async def ban(interaction: discord.Interaction, member: discord.Member, ly_do: str):
-    await member.ban(reason=ly_do)
-    await interaction.response.send_message(f"⚡ Đã cho {member.mention} bay màu vĩnh viễn khỏi server! Lý do: {ly_do}")
-
-@bot.tree.command(name="clean", description="Xóa rác hàng loạt tin nhắn")
-@app_commands.checks.has_permissions(manage_messages=True)
-async def clean(interaction: discord.Interaction, so_luong: int):
-    await interaction.response.defer(ephemeral=True)
-    deleted = await interaction.channel.purge(limit=so_luong)
-    await interaction.followup.send(f"🧹 Đã thiêu hủy sạch sẽ {len(deleted)} tin nhắn rác!", ephemeral=True)
-
-@bot.tree.command(name="daily", description="Điểm danh nhận xu hằng ngày")
-async def daily(interaction: discord.Interaction):
-    u = get_user(interaction.user.id)
-    u["xu"] += 2000
-    update_user(interaction.user.id, u["xu"], u["warns"], u["xp"], u["level"])
-    await interaction.response.send_message(f"🎁 {interaction.user.mention} vừa đút túi **2,000 Xu** điểm danh! (Tổng tài sản: {u['xu']} Xu)")
-
-@bot.tree.command(name="pay", description="Chuyển xu cho người khác")
-async def pay(interaction: discord.Interaction, member: discord.Member, so_xu: int):
-    if so_xu <= 0 or member.id == interaction.user.id:
-        await interaction.response.send_message("❌ Số xu không hợp lệ hoặc tự chuyển cho chính mình!", ephemeral=True)
-        return
-
-    sender = get_user(interaction.user.id)
-    if sender["xu"] < so_xu:
-        await interaction.response.send_message("❌ Nghèo rớt mồng tơi mà đòi làm từ thiện! Không đủ xu.", ephemeral=True)
-        return
-
-    receiver = get_user(member.id)
-    update_user(interaction.user.id, sender["xu"] - so_xu, sender["warns"], sender["xp"], sender["level"])
-    update_user(member.id, receiver["xu"] + so_xu, receiver["warns"], receiver["xp"], receiver["level"])
-
-    await interaction.response.send_message(f"💸 {interaction.user.mention} đã chuyển thành công **{so_xu} Xu** cho {member.mention}!")
-
-@bot.tree.command(name="rank", description="Xem cấp độ và tài sản chiến binh")
-async def rank(interaction: discord.Interaction, member: discord.Member = None):
-    target = member or interaction.user
-    u = get_user(target.id)
-    
-    embed = discord.Embed(title=f"📊 HỒ SƠ CHIẾN BINH: {target.name}", color=discord.Color.blue())
-    embed.set_thumbnail(url=target.display_avatar.url)
-    embed.add_field(name="⭐ Level", value=str(u["level"]), inline=True)
-    embed.add_field(name="📈 XP", value=f"{u['xp']} / {u['level'] * 100}", inline=True)
-    embed.add_field(name="💰 Tài sản", value=f"{u['xu']} Xu", inline=True)
-    embed.add_field(name="⚠️ Vi phạm", value=f"{u['warns']} lần", inline=True)
-    
-    await interaction.response.send_message(embed=embed)
-
-@bot.tree.command(name="taixiu", description="Khô máu với game tài xỉu")
+@bot.tree.command(name="taixiu", description="Chơi tài xỉu kiếm xu")
 async def taixiu(interaction: discord.Interaction, cuoc: int, luachon: str):
     u = get_user(interaction.user.id)
     if cuoc <= 0 or cuoc > u["xu"]:
-        await interaction.response.send_message("❌ Cược láo hoặc không đủ xu mà đòi chơi lớn à?", ephemeral=True)
+        await interaction.response.send_message("❌ Không đủ xu hoặc cược láo!", ephemeral=True)
         return
-    
     luachon = luachon.lower()
     if luachon not in ["tai", "xiu"]:
         await interaction.response.send_message("❌ Chỉ chọn `tai` hoặc `xiu`!", ephemeral=True)
         return
-
     xuc_xac = [random.randint(1, 6) for _ in range(3)]
     tong = sum(xuc_xac)
     kq = "tai" if tong >= 11 else "xiu"
-
     if luachon == kq:
         u["xu"] += cuoc
-        msg = f"🎲 Xúc xắc: {xuc_xac} (Tổng: {tong} - **{kq.upper()}**)\n🎉 Húp trọn **+{cuoc} Xu**!"
+        msg = f"🎲 Xúc xắc: {xuc_xac} (Tổng: {tong} - **{kq.upper()}**)\n🎉 Thắng lớn! Cộng **+{cuoc} Xu**."
     else:
         u["xu"] -= cuoc
-        msg = f"🎲 Xúc xắc: {xuc_xac} (Tổng: {tong} - **{kq.upper()}**)\n😭 Sạch túi! Mất **-{cuoc} Xu**."
-
-    update_user(interaction.user.id, u["xu"], u["warns"], u["xp"], u["level"])
+        msg = f"🎲 Xúc xắc: {xuc_xac} (Tổng: {tong} - **{kq.upper()}**)\n😭 Thua sạch! Trừ **-{cuoc} Xu**."
+    update_user(interaction.user.id, u["xu"], u["warns"], u["xp"], u["level"], u["title"])
     await interaction.response.send_message(msg)
+
+@bot.tree.command(name="toprich", description="Bảng xếp hạng đại gia xu")
+async def toprich(interaction: discord.Interaction):
+    conn = sqlite3.connect(fn_db)
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id, xu, title FROM users ORDER BY xu DESC LIMIT 5")
+    rows = cursor.fetchall()
+    conn.close()
+    embed = discord.Embed(title="🏆 TOP 5 ĐẠI GIA LẮM XU", color=discord.Color.gold())
+    for idx, (uid, xu, title) in enumerate(rows, 1):
+        user = interaction.guild.get_member(uid)
+        name = user.name if user else f"User ID: {uid}"
+        embed.add_field(name=f"Top {idx}: {name} [{title}]", value=f"💰 {xu:,} Xu", inline=False)
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="clean", description="Xóa nhanh tin nhắn rác")
+@app_commands.checks.has_permissions(manage_messages=True)
+async def clean(interaction: discord.Interaction, so_luong: int):
+    await interaction.response.defer(ephemeral=True)
+    deleted = await interaction.channel.purge(limit=so_luong)
+    await interaction.followup.send(f"🧹 Đã xóa sạch {len(deleted)} tin nhắn rác!", ephemeral=True)
 
 # --- KHỞI CHẠY ---
 if __name__ == "__main__":
@@ -364,3 +287,4 @@ if __name__ == "__main__":
         bot.run(TOKEN)
     else:
         print("❌ Lỗi: Thiếu DISCORD_TOKEN!")
+ 
